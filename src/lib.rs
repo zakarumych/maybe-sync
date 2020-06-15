@@ -90,7 +90,7 @@
 //! [`FetchSource`]: https://docs.rs/goods/0.5/wasm32-unknown-unknown/goods/struct.FetchSource.html
 //! [`wasm_bindgen_futures::spawn_local`]: https://docs.rs/wasm-bindgen-futures/0.4/wasm_bindgen_futures/fn.spawn_local.html
 //! [`goods::Spawn::spawn`]: https://docs.rs/goods/0.5/goods/trait.Spawn.html#tymethod.spawn
-//! [`maybe-sync::BoxFuture`]: ./type.BoxFuture.html
+//! [`maybe_sync::BoxFuture`]: ./type.BoxFuture.html
 //! [`MaybeSend`]: ./trait.MaybeSend.html
 //! [`MaybeSync`]: ./trait.MaybeSync.html
 //! [`alloc::rc::Rc`]: https://doc.rust-lang.org/alloc/rc/struct.Rc.html
@@ -100,16 +100,15 @@
 //! [`core::cell::RefCell`]: https://doc.rust-lang.org/core/cell/struct.RefCell.html
 
 #![no_std]
+#![cfg_attr(all(doc, feature = "unstable-doc"), feature(doc_cfg))]
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
 #[cfg(feature = "sync")]
 mod sync {
-    use {
-        core::{future::Future, pin::Pin},
-        parking_lot,
-    };
+    #[cfg(feature = "alloc")]
+    use core::{future::Future, pin::Pin};
 
     /// Reexports of the actual marker traits from core.
     pub use core::marker::{Send as MaybeSend, Sync as MaybeSync};
@@ -123,21 +122,58 @@ mod sync {
     /// A type alias equal to `futures::future::LocalBoxFuture`
     /// when "sync" feature is not enabled.
     #[cfg(feature = "alloc")]
-    #[cfg_attr(feature = "unstable-doc", doc(cfg(feature = "alloc")))]
+    #[cfg_attr(all(doc, feature = "unstable-doc"), doc(cfg(feature = "alloc")))]
     pub type BoxFuture<'a, T> = Pin<alloc::boxed::Box<dyn Future<Output = T> + Send + 'a>>;
 
     /// A pointer type which can be safely shared between threads
     /// when "sync" feature is enabled.\
     /// A pointer type which can be shared, but only within single thread
     /// where it was created when "sync" feature is not enabled.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use {maybe_sync::{MaybeSend, Rc}, std::fmt::Debug};
+    ///
+    /// fn maybe_sends<T: MaybeSend + Debug + 'static>(val: T) {
+    ///   #[cfg(feature = "sync")]
+    ///   {
+    ///     // If this code is compiled then `MaybeSend` is alias to `std::marker::Send`.
+    ///     std::thread::spawn(move || { println!("{:?}", val) });
+    ///   }
+    /// }
+    ///
+    /// // Unlike `std::rc::Rc` this `maybe_sync::Rc` always satisfies `MaybeSend` bound.
+    /// maybe_sends(Rc::new(42));
+    /// ```
     #[cfg(feature = "alloc")]
-    #[cfg_attr(feature = "unstable-doc", doc(cfg(feature = "alloc")))]
+    #[cfg_attr(all(doc, feature = "unstable-doc"), doc(cfg(feature = "alloc")))]
     pub type Rc<T> = alloc::sync::Arc<T>;
 
     /// Mutex implementation to use in conjunction with `MaybeSync` bound.
     ///
     /// A type alias to `parking_lot::Mutex` when "sync" feature is enabled.\
     /// A wrapper type around `std::cell::RefCell` when "sync" feature is not enabled.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use {maybe_sync::{MaybeSend, Mutex}, std::{fmt::Debug, sync::Arc}};
+    ///
+    /// fn maybe_sends<T: MaybeSend + Debug + 'static>(val: Arc<Mutex<T>>) {
+    ///   #[cfg(feature = "sync")]
+    ///   {
+    ///     // If this code is compiled then `MaybeSend` is alias to `std::marker::Send`,
+    ///     // and `Mutex` is `parking_lot::Mutex`.
+    ///     std::thread::spawn(move || { println!("{:?}", *val.lock()) });
+    ///   }
+    /// }
+    ///
+    /// // `maybe_sync::Mutex<T>` would always satisfy `MaybeSync` and `MaybeSend`
+    /// // bounds when `T: MaybeSend`,
+    /// // even if feature "sync" is enabeld.
+    /// maybe_sends(Arc::new(Mutex::new(42)));
+    /// ```
     pub type Mutex<T> = parking_lot::Mutex<T>;
 
     /// A boolean type which can be safely shared between threads
@@ -223,11 +259,10 @@ mod sync {
 
 #[cfg(not(feature = "sync"))]
 mod unsync {
-    use core::{
-        cell::{RefCell, RefMut},
-        future::Future,
-        pin::Pin,
-    };
+    use core::cell::{RefCell, RefMut};
+
+    #[cfg(feature = "alloc")]
+    use core::{future::Future, pin::Pin};
 
     /// Marker trait that can represent nothing if feature "sync" is not enabled.
     /// Or be reexport of `std::marker::Send` if "sync" feature is enabled.
@@ -235,7 +270,27 @@ mod unsync {
     /// It is intended to be used as trait bound where `std::marker::Send` bound
     /// is required only when application is compiled for multithreaded environment.\
     /// If "sync" feature is not enabled then this trait bound will *NOT* allow
-    /// value to cross thread boundary or be used where sendable value is expected.    
+    /// value to cross thread boundary or be used where sendable value is expected.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use {maybe_sync::MaybeSend, std::{fmt::Debug, rc::Rc}};
+    ///
+    /// fn maybe_sends<T: MaybeSend + Debug + 'static>(val: T) {
+    ///   #[cfg(feature = "sync")]
+    ///   {
+    ///     // If this code is compiled then `MaybeSend` is alias to `std::marker::Send`.
+    ///     std::thread::spawn(move || { println!("{:?}", val) });
+    ///   }
+    /// }
+    ///
+    /// #[cfg(not(feature = "sync"))]
+    /// {
+    ///   // If this code is compiled then `MaybeSend` dummy markerd implemented for all types.
+    ///   maybe_sends(Rc::new(42));
+    /// }
+    /// ```
     pub trait MaybeSend {}
 
     /// All values are maybe sendable.
@@ -249,6 +304,26 @@ mod unsync {
     /// If "sync" feature is not enabled then this trait bound will *NOT* allow
     /// reference to the value to cross thread boundary or be used where sync
     /// value is expected.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use {maybe_sync::MaybeSync, std::{sync::Arc, fmt::Debug, cell::Cell}};
+    ///
+    /// fn maybe_shares<T: MaybeSync + Debug + 'static>(val: Arc<T>) {
+    ///   #[cfg(feature = "sync")]
+    ///   {
+    ///     // If this code is compiled then `MaybeSync` is alias to `std::marker::Sync`.
+    ///     std::thread::spawn(move || { println!("{:?}", val) });
+    ///   }
+    /// }
+    ///
+    /// #[cfg(not(feature = "sync"))]
+    /// {
+    ///   // If this code is compiled then `MaybeSync` dummy markerd implemented for all types.
+    ///   maybe_shares(Arc::new(Cell::new(42)));
+    /// }
+    /// ```
     pub trait MaybeSync {}
 
     /// All values are maybe sync.
@@ -263,21 +338,60 @@ mod unsync {
     /// A type alias equal to `futures::future::LocalBoxFuture`
     /// when "sync" feature is not enabled.
     #[cfg(feature = "alloc")]
-    #[cfg_attr(feature = "unstable-doc", doc(cfg(feature = "alloc")))]
+    #[cfg_attr(all(doc, feature = "unstable-doc"), doc(cfg(feature = "alloc")))]
     pub type BoxFuture<'a, T> = Pin<alloc::boxed::Box<dyn Future<Output = T> + 'a>>;
 
     /// A pointer type which can be safely shared between threads
     /// when "sync" feature is enabled.\
     /// A pointer type which can be shared, but only within single thread
     /// where it was created when "sync" feature is not enabled.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use {maybe_sync::{MaybeSend, Rc}, std::fmt::Debug};
+    ///
+    /// fn maybe_sends<T: MaybeSend + Debug + 'static>(val: T) {
+    ///   #[cfg(feature = "sync")]
+    ///   {
+    ///     // If this code is compiled then `MaybeSend` is alias to `std::marker::Send`.
+    ///     std::thread::spawn(move || { println!("{:?}", val) });
+    ///   }
+    /// }
+    ///
+    /// // Unlike `std::rc::Rc` this `maybe_sync::Rc<T>` would always
+    /// // satisfy `MaybeSend` bound when `T: MaybeSend + MaybeSync`,
+    /// // even if feature "sync" is enabeld.
+    /// maybe_sends(Rc::new(42));
+    /// ```
     #[cfg(feature = "alloc")]
-    #[cfg_attr(feature = "unstable-doc", doc(cfg(feature = "alloc")))]
+    #[cfg_attr(all(doc, feature = "unstable-doc"), doc(cfg(feature = "alloc")))]
     pub type Rc<T> = alloc::rc::Rc<T>;
 
     /// Mutex implementation to use in conjunction with `MaybeSync` bound.
     ///
     /// A type alias to `parking_lot::Mutex` when "sync" feature is enabled.\
     /// A wrapper type around `std::cell::RefCell` when "sync" feature is not enabled.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use {maybe_sync::{MaybeSend, Mutex}, std::{fmt::Debug, sync::Arc}};
+    ///
+    /// fn maybe_sends<T: MaybeSend + Debug + 'static>(val: Arc<Mutex<T>>) {
+    ///   #[cfg(feature = "sync")]
+    ///   {
+    ///     // If this code is compiled then `MaybeSend` is alias to `std::marker::Send`,
+    ///     // and `Mutex` is `parking_lot::Mutex`.
+    ///     std::thread::spawn(move || { println!("{:?}", *val.lock()) });
+    ///   }
+    /// }
+    ///
+    /// // `maybe_sync::Mutex<T>` would always satisfy `MaybeSync` and `MaybeSend`
+    /// // bounds when `T: MaybeSend`,
+    /// // even if feature "sync" is enabeld.
+    /// maybe_sends(Arc::new(Mutex::new(42)));
+    /// ```
     #[repr(transparent)]
     #[derive(Debug, Default)]
     pub struct Mutex<T: ?Sized> {
@@ -412,140 +526,135 @@ pub use sync::*;
 #[cfg(not(feature = "sync"))]
 pub use unsync::*;
 
-/// Expands to `dyn Traits` with `Send` marker trait
+/// Expands to `dyn $traits` with `Send` marker trait
 /// added when "sync" feature is enabled.
 ///
-/// Expands to `dyn Traits` without `Send` marker trait
+/// Expands to `dyn $traits` without `Send` marker trait
 /// added "sync" feature is not enabled.
 ///
 /// # Example
 /// ```
 /// # use maybe_sync::{MaybeSend, dyn_maybe_send};
-///
 /// fn foo<T: MaybeSend>(_: T) {}
-///
+/// // `x` will implement `MaybeSend` whether "sync" feature is enabled or not.
 /// let x: Box<dyn_maybe_send!(std::future::Future<Output = u32>)> = Box::new(async move { 42 });
 /// foo(x);
 /// ```
 #[cfg(feature = "sync")]
 #[macro_export]
 macro_rules! dyn_maybe_send {
-    ($($tokens:tt)+) => {
-        dyn $($tokens)+ + Send
+    ($($traits:tt)+) => {
+        dyn $($traits)+ + Send
     };
 }
 
-/// Expands to `dyn Traits` with `Send` marker trait
+/// Expands to `dyn $traits` with `Send` marker trait
 /// added when "sync" feature is enabled.
 ///
-/// Expands to `dyn Traits` without `Send` marker trait
+/// Expands to `dyn $traits` without `Send` marker trait
 /// added "sync" feature is not enabled.
 ///
 /// # Example
 /// ```
 /// # use maybe_sync::{MaybeSend, dyn_maybe_send};
-///
 /// fn foo<T: MaybeSend>(_: T) {}
-///
+/// // `x` will implement `MaybeSend` whether "sync" feature is enabled or not.
 /// let x: Box<dyn_maybe_send!(std::future::Future<Output = u32>)> = Box::new(async move { 42 });
 /// foo(x);
 /// ```
 #[cfg(not(feature = "sync"))]
 #[macro_export]
 macro_rules! dyn_maybe_send {
-    ($($tokens:tt)+) => {
-        dyn $($tokens)+
+    ($($traits:tt)+) => {
+        dyn $($traits)+
     };
 }
 
-/// Expands to `dyn Traits` with `Sync` marker trait
+/// Expands to `dyn $traits` with `Sync` marker trait
 /// added when "sync" feature is enabled.
 ///
-/// Expands to `dyn Traits` without `Sync` marker trait
+/// Expands to `dyn $traits` without `Sync` marker trait
 /// added "sync" feature is not enabled.
 ///
 /// # Example
 /// ```
 /// # use maybe_sync::{MaybeSync, dyn_maybe_sync};
-///
 /// fn foo<T: MaybeSync + ?Sized>(_: &T) {}
 ///
 /// let x: &dyn_maybe_sync!(AsRef<str>) = &"qwerty";
+/// // `x` will implement `MaybeSync` whether "sync" feature is enabled or not.
 /// foo(x);
 /// ```
 #[cfg(feature = "sync")]
 #[macro_export]
 macro_rules! dyn_maybe_sync {
-    ($($tokens:tt)+) => {
-        dyn $($tokens)+ + Sync
+    ($($traits:tt)+) => {
+        dyn $($traits)+ + Sync
     };
 }
 
-/// Expands to `dyn Traits` with `Sync` marker trait
+/// Expands to `dyn $traits` with `Sync` marker trait
 /// added when "sync" feature is enabled.
 ///
-/// Expands to `dyn Traits` without `Sync` marker trait
+/// Expands to `dyn $traits` without `Sync` marker trait
 /// added "sync" feature is not enabled.
 ///
 /// # Example
 /// ```
 /// # use maybe_sync::{MaybeSync, dyn_maybe_sync};
-///
 /// fn foo<T: MaybeSync + ?Sized>(_: &T) {}
-///
+/// // `x` will implement `MaybeSync` whether "sync" feature is enabled or not.
 /// let x: &dyn_maybe_sync!(AsRef<str>) = &"qwerty";
 /// foo(x);
 /// ```
 #[cfg(not(feature = "sync"))]
 #[macro_export]
 macro_rules! dyn_maybe_sync {
-    ($($tokens:tt)+) => {
-        dyn $($tokens)+
+    ($($traits:tt)+) => {
+        dyn $($traits)+
     };
 }
 
-/// Expands to `dyn Traits` with `Send` and `Sync` marker trait
+/// Expands to `dyn $traits` with `Send` and `Sync` marker trait
 /// added when "sync" feature is enabled.
 ///
-/// Expands to `dyn Traits` without `Send` and `Sync` marker trait
+/// Expands to `dyn $traits` without `Send` and `Sync` marker trait
 /// added "sync" feature is not enabled.
 ///
 /// # Example
 /// ```
 /// # use maybe_sync::{MaybeSend, MaybeSync, dyn_maybe_send_sync};
-///
 /// fn foo<T: MaybeSend + MaybeSync + ?Sized>(_: &T) {}
-///
+/// // `x` will implement `MaybeSend` and `MaybeSync` whether "sync" feature is enabled or not.
 /// let x: &dyn_maybe_send_sync!(AsRef<str>) = &"qwerty";
 /// foo(x);
 /// ```
 #[cfg(feature = "sync")]
 #[macro_export]
 macro_rules! dyn_maybe_send_sync {
-    ($($tokens:tt)+) => {
-        dyn $($tokens)+ + Send + Sync
+    ($($traits:tt)+) => {
+        dyn $($traits)+ + Send + Sync
     };
 }
 
-/// Expands to `dyn Traits` with `Sync` marker trait
+/// Expands to `dyn $traits` with `Sync` marker trait
 /// added when "sync" feature is enabled.
 ///
-/// Expands to `dyn Traits` without `Sync` marker trait
+/// Expands to `dyn $traits` without `Sync` marker trait
 /// added "sync" feature is not enabled.
 ///
 /// # Example
 /// ```
 /// # use maybe_sync::{MaybeSend, MaybeSync, dyn_maybe_send_sync};
-///
 /// fn foo<T: MaybeSend + MaybeSync + ?Sized>(_: &T) {}
-///
+/// // `x` will implement `MaybeSend` and `MaybeSync` whether "sync" feature is enabled or not.
 /// let x: &dyn_maybe_send_sync!(AsRef<str>) = &"qwerty";
 /// foo(x);
 /// ```
 #[cfg(not(feature = "sync"))]
 #[macro_export]
 macro_rules! dyn_maybe_send_sync {
-    ($($tokens:tt)+) => {
-        dyn $($tokens)+
+    ($($traits:tt)+) => {
+        dyn $($traits)+
     };
 }
