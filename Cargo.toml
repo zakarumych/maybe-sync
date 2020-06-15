@@ -1,0 +1,35 @@
+[package]
+name = "maybe-sync"
+version = "0.1.0"
+authors = ["Zakarum <zakarumych@ya.ru>"]
+edition = "2018"
+description = "Helper crate for libraries that want to have a switch between multi- and single-threaded versions"
+license = "MIT OR Apache-2.0"
+documentation = "https://docs.rs/maybe-sync"
+keywords = ["no_std", "wasm", "web", "sync"]
+readme = "README.md"
+
+[features]
+unstable-doc = []
+sync = ["parking_lot"]
+alloc = []
+
+default = ["alloc"]
+
+[dependencies]
+parking_lot = { version = "0.10.2", optional = true }
+
+[package.metadata.docs.rs]
+no-default-features = true
+features = ["unstable-doc", "alloc"]
+
+targets = [
+    "i686-pc-windows-gnu",
+    "i686-pc-windows-msvc",
+    "i686-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "x86_64-pc-windows-gnu",
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "wasm32-unknown-unknown",
+]
